@@ -106,10 +106,27 @@
         .sound-toggle:hover {
             background: rgba(147, 51, 234, 0.9);
         }
+        .pause-button {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            background: rgba(168, 85, 247, 0.8);
+            border: 2px solid #a855f7;
+            color: white;
+            padding: 10px 15px;
+            font-size: 1rem;
+            border-radius: 5px;
+            cursor: pointer;
+            z-index: 100;
+        }
+        .pause-button:hover {
+            background: rgba(147, 51, 234, 0.9);
+        }
     </style>
 </head>
 <body>
     <div id="gameContainer">
+        <button class="pause-button" onclick="togglePause()" id="pauseButton">⏸ PAUSE</button>
         <button class="sound-toggle" onclick="toggleSound()" id="soundButton">🔊 Sound ON</button>
         <canvas id="gameCanvas" width="400" height="600"></canvas>
         
@@ -119,6 +136,15 @@
             <p>Auto-Shoots!</p>
             <p class="score" id="highScoreDisplay"></p>
             <button onclick="startGame()">START GAME</button>
+        </div>
+        
+        <div id="pauseScreen" class="overlay hidden">
+            <h1>PAUSED</h1>
+            <p class="score">Score: <span id="pauseScore">0</span></p>
+            <p>Wave: <span id="pauseWave">1</span></p>
+            <p>Lives: <span id="pauseLives">3</span></p>
+            <button onclick="togglePause()">RESUME</button>
+            <button onclick="quitGame()" style="background: #ef4444; margin-top: 10px;">QUIT</button>
         </div>
         
         <div id="gameOverScreen" class="overlay hidden game-over">
@@ -139,20 +165,25 @@
         const canvas = document.getElementById('gameCanvas');
         const ctx = canvas.getContext('2d');
         const startScreen = document.getElementById('startScreen');
+        const pauseScreen = document.getElementById('pauseScreen');
         const gameOverScreen = document.getElementById('gameOverScreen');
         const highScoreDisplay = document.getElementById('highScoreDisplay');
         const finalScore = document.getElementById('finalScore');
         const finalWave = document.getElementById('finalWave');
         const newHighScore = document.getElementById('newHighScore');
         const soundButton = document.getElementById('soundButton');
+        const pauseButton = document.getElementById('pauseButton');
         const bgMusic = document.getElementById('backgroundMusic');
 
         let gameState = 'start';
         let score = 0;
         let highScore = 0;
         let wave = 1;
+        let lives = 3;
         let animationId;
         let soundEnabled = true;
+        let combo = 0;
+        let particles = [];
 
         const width = canvas.width;
         const height = canvas.height;
@@ -162,7 +193,9 @@
             y: height - 60,
             width: 40,
             height: 30,
-            speed: 5
+            speed: 5,
+            invincible: false,
+            invincibleTime: 0
         };
 
         let bullets = [];
@@ -173,15 +206,12 @@
         let touchActive = false;
         let touchX = 0;
 
-        // Set background music volume
         bgMusic.volume = 0.3;
 
-        // Audio context for sound effects
         const audioContext = new (window.AudioContext || window.webkitAudioContext)();
 
         function playBackgroundMusic() {
             if (!soundEnabled) return;
-            
             try {
                 bgMusic.play().catch(e => {
                     console.log('Music playback prevented by browser:', e);
@@ -227,6 +257,12 @@
                         gainNode.gain.value = 0.08;
                         gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.1);
                         break;
+                    case 'damage':
+                        oscillator.type = 'sawtooth';
+                        oscillator.frequency.value = 150;
+                        gainNode.gain.value = 0.3;
+                        gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.3);
+                        break;
                     case 'gameOver':
                         oscillator.type = 'sawtooth';
                         oscillator.frequency.value = 100;
@@ -249,6 +285,12 @@
             }
         }
 
+        function vibrate() {
+            if (navigator.vibrate) {
+                navigator.vibrate(200);
+            }
+        }
+
         function toggleSound() {
             soundEnabled = !soundEnabled;
             soundButton.textContent = soundEnabled ? '🔊 Sound ON' : '🔇 Sound OFF';
@@ -258,6 +300,65 @@
             } else if (gameState === 'playing') {
                 playBackgroundMusic();
             }
+        }
+
+        function togglePause() {
+            if (gameState === 'playing') {
+                gameState = 'paused';
+                pauseButton.style.display = 'none';
+                document.getElementById('pauseScore').textContent = score;
+                document.getElementById('pauseWave').textContent = wave;
+                document.getElementById('pauseLives').textContent = lives;
+                pauseScreen.classList.remove('hidden');
+                bgMusic.pause();
+            } else if (gameState === 'paused') {
+                gameState = 'playing';
+                pauseButton.style.display = 'block';
+                pauseScreen.classList.add('hidden');
+                if (soundEnabled) bgMusic.play();
+                gameLoop();
+            }
+        }
+
+        function quitGame() {
+            gameState = 'start';
+            pauseScreen.classList.add('hidden');
+            startScreen.classList.remove('hidden');
+            pauseButton.style.display = 'none';
+            stopBackgroundMusic();
+            if (animationId) {
+                cancelAnimationFrame(animationId);
+            }
+        }
+
+        function createParticles(x, y, color) {
+            for (let i = 0; i < 15; i++) {
+                particles.push({
+                    x: x,
+                    y: y,
+                    vx: (Math.random() - 0.5) * 6,
+                    vy: (Math.random() - 0.5) * 6,
+                    life: 1,
+                    color: color
+                });
+            }
+        }
+
+        function updateParticles() {
+            particles = particles.filter(p => {
+                p.x += p.vx;
+                p.y += p.vy;
+                p.life -= 0.02;
+                
+                if (p.life > 0) {
+                    ctx.globalAlpha = p.life;
+                    ctx.fillStyle = p.color;
+                    ctx.fillRect(p.x, p.y, 3, 3);
+                    ctx.globalAlpha = 1;
+                    return true;
+                }
+                return false;
+            });
         }
 
         function initEnemies(waveNum) {
@@ -331,11 +432,13 @@
             ctx.fillStyle = '#000';
             ctx.fillRect(0, 0, width, height);
 
+            // Animated stars
             ctx.fillStyle = '#fff';
             for (let i = 0; i < 50; i++) {
                 const x = (i * 37) % width;
-                const y = (i * 53 + Date.now() * 0.01) % height;
-                ctx.fillRect(x, y, 2, 2);
+                const y = (i * 53 + Date.now() * 0.05) % height;
+                const size = (i % 3) + 1;
+                ctx.fillRect(x, y, size, size);
             }
 
             if (touchActive) {
@@ -360,13 +463,21 @@
                 lastShot = now;
             }
 
-            ctx.fillStyle = '#0f0';
-            ctx.beginPath();
-            ctx.moveTo(player.x + player.width / 2, player.y);
-            ctx.lineTo(player.x, player.y + player.height);
-            ctx.lineTo(player.x + player.width, player.y + player.height);
-            ctx.closePath();
-            ctx.fill();
+            // Handle invincibility
+            if (player.invincible && now - player.invincibleTime > 2000) {
+                player.invincible = false;
+            }
+
+            // Draw player with flashing effect when invincible
+            if (!player.invincible || Math.floor(now / 100) % 2 === 0) {
+                ctx.fillStyle = player.invincible ? '#0ff' : '#0f0';
+                ctx.beginPath();
+                ctx.moveTo(player.x + player.width / 2, player.y);
+                ctx.lineTo(player.x, player.y + player.height);
+                ctx.lineTo(player.x + player.width, player.y + player.height);
+                ctx.closePath();
+                ctx.fill();
+            }
 
             bullets = bullets.filter(bullet => {
                 bullet.y -= bullet.speed;
@@ -404,12 +515,24 @@
                 ctx.fillRect(bullet.x, bullet.y, bullet.width, bullet.height);
 
                 if (
+                    !player.invincible &&
                     bullet.x < player.x + player.width &&
                     bullet.x + bullet.width > player.x &&
                     bullet.y < player.y + player.height &&
                     bullet.y + bullet.height > player.y
                 ) {
-                    endGame();
+                    lives--;
+                    playSound('damage');
+                    vibrate();
+                    createParticles(player.x + player.width / 2, player.y + player.height / 2, '#0f0');
+                    
+                    if (lives <= 0) {
+                        endGame();
+                    } else {
+                        player.invincible = true;
+                        player.invincibleTime = Date.now();
+                        combo = 0;
+                    }
                     return false;
                 }
 
@@ -436,24 +559,50 @@
                     ) {
                         enemy.alive = false;
                         bullets.splice(bIndex, 1);
-                        score += 100;
+                        combo++;
+                        const points = 100 + (combo * 10);
+                        score += points;
                         playSound('hit');
+                        createParticles(enemy.x + enemy.width / 2, enemy.y + enemy.height / 2, '#f0f');
                     }
                 });
             });
 
             if (allDead) {
                 wave++;
+                combo = 0;
                 playSound('wave');
                 initEnemies(wave);
                 bullets = [];
                 enemyBullets = [];
             }
 
+            updateParticles();
+
+            // Draw UI
             ctx.fillStyle = '#fff';
             ctx.font = '20px monospace';
             ctx.fillText(`Score: ${score}`, 10, 30);
             ctx.fillText(`Wave: ${wave}`, width - 120, 30);
+            
+            // Draw lives
+            ctx.fillText(`Lives:`, 10, height - 10);
+            for (let i = 0; i < lives; i++) {
+                ctx.fillStyle = '#0f0';
+                ctx.beginPath();
+                ctx.moveTo(80 + i * 25, height - 20);
+                ctx.lineTo(70 + i * 25, height - 10);
+                ctx.lineTo(90 + i * 25, height - 10);
+                ctx.closePath();
+                ctx.fill();
+            }
+
+            // Draw combo
+            if (combo > 1) {
+                ctx.fillStyle = '#fbbf24';
+                ctx.font = 'bold 16px monospace';
+                ctx.fillText(`COMBO x${combo}`, width - 130, height - 10);
+            }
 
             animationId = requestAnimationFrame(gameLoop);
         }
@@ -461,13 +610,18 @@
         function startGame() {
             score = 0;
             wave = 1;
+            lives = 3;
+            combo = 0;
             bullets = [];
             enemies = [];
             enemyBullets = [];
+            particles = [];
             player.x = width / 2 - 20;
+            player.invincible = false;
             gameState = 'playing';
             startScreen.classList.add('hidden');
             gameOverScreen.classList.add('hidden');
+            pauseButton.style.display = 'block';
             initEnemies(wave);
             playBackgroundMusic();
             gameLoop();
@@ -477,6 +631,7 @@
             gameState = 'gameOver';
             stopBackgroundMusic();
             playSound('gameOver');
+            pauseButton.style.display = 'none';
             
             if (animationId) {
                 cancelAnimationFrame(animationId);
@@ -499,5 +654,4 @@
         }
     </script>
 </body>
-
 </html>
