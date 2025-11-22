@@ -78,7 +78,7 @@
             font-size: clamp(1.2rem, 5vw, 1.8rem);
             border-radius: 8px;
             cursor: pointer;
-            margin-top: 20px;
+            margin: 10px;
             font-family: 'Courier New', monospace;
             font-weight: bold;
             transition: all 0.3s;
@@ -90,6 +90,23 @@
         button:active {
             transform: scale(0.95);
         }
+        .difficulty-buttons {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            justify-content: center;
+            margin-top: 20px;
+        }
+        .difficulty-btn {
+            padding: 12px 30px;
+            font-size: clamp(1rem, 4vw, 1.3rem);
+        }
+        .easy { background: #10b981; }
+        .easy:hover { background: #059669; }
+        .normal { background: #f59e0b; }
+        .normal:hover { background: #d97706; }
+        .hard { background: #ef4444; }
+        .hard:hover { background: #dc2626; }
         .sound-toggle {
             position: absolute;
             top: 10px;
@@ -135,7 +152,12 @@
             <p>Touch & Drag to Move</p>
             <p>Auto-Shoots!</p>
             <p class="score" id="highScoreDisplay"></p>
-            <button onclick="startGame()">START GAME</button>
+            <p style="color: #a855f7; margin-top: 20px;">SELECT DIFFICULTY:</p>
+            <div class="difficulty-buttons">
+                <button class="difficulty-btn easy" onclick="startGame('easy')">EASY</button>
+                <button class="difficulty-btn normal" onclick="startGame('normal')">NORMAL</button>
+                <button class="difficulty-btn hard" onclick="startGame('hard')">HARD</button>
+            </div>
         </div>
         
         <div id="pauseScreen" class="overlay hidden">
@@ -151,8 +173,9 @@
             <h1>GAME OVER</h1>
             <p class="score" id="finalScore"></p>
             <p id="finalWave"></p>
+            <p id="finalDifficulty"></p>
             <p class="score" id="newHighScore"></p>
-            <button onclick="startGame()">PLAY AGAIN</button>
+            <button onclick="showStartScreen()">PLAY AGAIN</button>
         </div>
     </div>
 
@@ -170,6 +193,7 @@
         const highScoreDisplay = document.getElementById('highScoreDisplay');
         const finalScore = document.getElementById('finalScore');
         const finalWave = document.getElementById('finalWave');
+        const finalDifficulty = document.getElementById('finalDifficulty');
         const newHighScore = document.getElementById('newHighScore');
         const soundButton = document.getElementById('soundButton');
         const pauseButton = document.getElementById('pauseButton');
@@ -184,9 +208,19 @@
         let soundEnabled = true;
         let combo = 0;
         let particles = [];
+        let floatingTexts = [];
+        let difficulty = 'normal';
+        let screenShake = 0;
+        let waveTransition = 0;
 
         const width = canvas.width;
         const height = canvas.height;
+
+        const difficultySettings = {
+            easy: { lives: 5, enemySpeed: 0.7, shootInterval: 1500, playerSpeed: 6 },
+            normal: { lives: 3, enemySpeed: 1, shootInterval: 1000, playerSpeed: 5 },
+            hard: { lives: 2, enemySpeed: 1.3, shootInterval: 700, playerSpeed: 4 }
+        };
 
         let player = {
             x: width / 2 - 20,
@@ -321,14 +355,23 @@
         }
 
         function quitGame() {
+            showStartScreen();
+        }
+
+        function showStartScreen() {
             gameState = 'start';
             pauseScreen.classList.add('hidden');
+            gameOverScreen.classList.add('hidden');
             startScreen.classList.remove('hidden');
             pauseButton.style.display = 'none';
             stopBackgroundMusic();
             if (animationId) {
                 cancelAnimationFrame(animationId);
             }
+        }
+
+        function addScreenShake(amount) {
+            screenShake = amount;
         }
 
         function createParticles(x, y, color) {
@@ -342,6 +385,17 @@
                     color: color
                 });
             }
+        }
+
+        function createFloatingText(x, y, text, color) {
+            floatingTexts.push({
+                x: x,
+                y: y,
+                text: text,
+                color: color,
+                life: 1,
+                vy: -1
+            });
         }
 
         function updateParticles() {
@@ -359,6 +413,28 @@
                 }
                 return false;
             });
+        }
+
+        function updateFloatingTexts() {
+            floatingTexts = floatingTexts.filter(t => {
+                t.y += t.vy;
+                t.life -= 0.015;
+                
+                if (t.life > 0) {
+                    ctx.globalAlpha = t.life;
+                    ctx.fillStyle = t.color;
+                    ctx.font = 'bold 16px monospace';
+                    ctx.fillText(t.text, t.x, t.y);
+                    ctx.globalAlpha = 1;
+                    return true;
+                }
+                return false;
+            });
+        }
+
+        function getEnemyColor(row) {
+            const colors = ['#ff00ff', '#ff00aa', '#aa00ff', '#ff0088'];
+            return colors[row % colors.length];
         }
 
         function initEnemies(waveNum) {
@@ -381,7 +457,8 @@
                         baseX: startX + col * spacing,
                         row: row,
                         col: col,
-                        alive: true
+                        alive: true,
+                        color: getEnemyColor(row)
                     });
                 }
             }
@@ -429,6 +506,16 @@
         function gameLoop() {
             if (gameState !== 'playing') return;
 
+            // Apply screen shake
+            ctx.save();
+            if (screenShake > 0) {
+                const shakeX = (Math.random() - 0.5) * screenShake;
+                const shakeY = (Math.random() - 0.5) * screenShake;
+                ctx.translate(shakeX, shakeY);
+                screenShake *= 0.9;
+                if (screenShake < 0.5) screenShake = 0;
+            }
+
             ctx.fillStyle = '#000';
             ctx.fillRect(0, 0, width, height);
 
@@ -439,6 +526,18 @@
                 const y = (i * 53 + Date.now() * 0.05) % height;
                 const size = (i % 3) + 1;
                 ctx.fillRect(x, y, size, size);
+            }
+
+            // Wave transition banner
+            if (waveTransition > 0) {
+                ctx.globalAlpha = Math.min(waveTransition / 30, 1);
+                ctx.fillStyle = '#a855f7';
+                ctx.font = 'bold 48px monospace';
+                ctx.textAlign = 'center';
+                ctx.fillText(`WAVE ${wave}`, width / 2, height / 2);
+                ctx.textAlign = 'left';
+                ctx.globalAlpha = 1;
+                waveTransition--;
             }
 
             if (touchActive) {
@@ -463,12 +562,10 @@
                 lastShot = now;
             }
 
-            // Handle invincibility
             if (player.invincible && now - player.invincibleTime > 2000) {
                 player.invincible = false;
             }
 
-            // Draw player with flashing effect when invincible
             if (!player.invincible || Math.floor(now / 100) % 2 === 0) {
                 ctx.fillStyle = player.invincible ? '#0ff' : '#0f0';
                 ctx.beginPath();
@@ -487,13 +584,14 @@
             });
 
             const time = Date.now() * 0.001;
+            const settings = difficultySettings[difficulty];
             enemies.forEach(enemy => {
                 if (enemy.alive) {
-                    enemy.x = enemy.baseX + Math.sin(time + enemy.col * 0.5) * 20;
+                    enemy.x = enemy.baseX + Math.sin(time * settings.enemySpeed + enemy.col * 0.5) * 20;
                 }
             });
 
-            if (now - lastEnemyShot > 1000) {
+            if (now - lastEnemyShot > settings.shootInterval) {
                 const aliveEnemies = enemies.filter(e => e.alive);
                 if (aliveEnemies.length > 0) {
                     const shooter = aliveEnemies[Math.floor(Math.random() * aliveEnemies.length)];
@@ -524,6 +622,7 @@
                     lives--;
                     playSound('damage');
                     vibrate();
+                    addScreenShake(15);
                     createParticles(player.x + player.width / 2, player.y + player.height / 2, '#0f0');
                     
                     if (lives <= 0) {
@@ -544,7 +643,7 @@
                 if (!enemy.alive) return;
                 allDead = false;
 
-                ctx.fillStyle = '#f0f';
+                ctx.fillStyle = enemy.color;
                 ctx.fillRect(enemy.x, enemy.y, enemy.width, enemy.height);
                 ctx.fillStyle = '#fff';
                 ctx.fillRect(enemy.x + 8, enemy.y + 8, 6, 6);
@@ -563,7 +662,9 @@
                         const points = 100 + (combo * 10);
                         score += points;
                         playSound('hit');
-                        createParticles(enemy.x + enemy.width / 2, enemy.y + enemy.height / 2, '#f0f');
+                        addScreenShake(5);
+                        createParticles(enemy.x + enemy.width / 2, enemy.y + enemy.height / 2, enemy.color);
+                        createFloatingText(enemy.x + enemy.width / 2 - 20, enemy.y, `+${points}`, '#fbbf24');
                     }
                 });
             });
@@ -572,20 +673,20 @@
                 wave++;
                 combo = 0;
                 playSound('wave');
+                waveTransition = 60;
                 initEnemies(wave);
                 bullets = [];
                 enemyBullets = [];
             }
 
             updateParticles();
+            updateFloatingTexts();
 
-            // Draw UI
             ctx.fillStyle = '#fff';
             ctx.font = '20px monospace';
             ctx.fillText(`Score: ${score}`, 10, 30);
             ctx.fillText(`Wave: ${wave}`, width - 120, 30);
             
-            // Draw lives
             ctx.fillText(`Lives:`, 10, height - 10);
             for (let i = 0; i < lives; i++) {
                 ctx.fillStyle = '#0f0';
@@ -597,26 +698,33 @@
                 ctx.fill();
             }
 
-            // Draw combo
             if (combo > 1) {
                 ctx.fillStyle = '#fbbf24';
                 ctx.font = 'bold 16px monospace';
                 ctx.fillText(`COMBO x${combo}`, width - 130, height - 10);
             }
 
+            ctx.restore();
+
             animationId = requestAnimationFrame(gameLoop);
         }
 
-        function startGame() {
+        function startGame(selectedDifficulty) {
+            difficulty = selectedDifficulty;
+            const settings = difficultySettings[difficulty];
+            
             score = 0;
             wave = 1;
-            lives = 3;
+            lives = settings.lives;
             combo = 0;
             bullets = [];
             enemies = [];
             enemyBullets = [];
             particles = [];
+            floatingTexts = [];
+            waveTransition = 60;
             player.x = width / 2 - 20;
+            player.speed = settings.playerSpeed;
             player.invincible = false;
             gameState = 'playing';
             startScreen.classList.add('hidden');
@@ -632,6 +740,7 @@
             stopBackgroundMusic();
             playSound('gameOver');
             pauseButton.style.display = 'none';
+            addScreenShake(20);
             
             if (animationId) {
                 cancelAnimationFrame(animationId);
@@ -646,6 +755,8 @@
             
             finalScore.textContent = `Score: ${score}`;
             finalWave.textContent = `Wave: ${wave}`;
+            finalDifficulty.textContent = `Difficulty: ${difficulty.toUpperCase()}`;
+            finalDifficulty.style.color = difficulty === 'easy' ? '#10b981' : difficulty === 'normal' ? '#f59e0b' : '#ef4444';
             gameOverScreen.classList.remove('hidden');
         }
 
